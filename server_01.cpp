@@ -10,29 +10,16 @@
 #include <netinet/ip.h>
 
 
-/*
-the typical workflow of a server goes something like this:
-fd = socket()
-bind(fd, address)
-while true:
-	conn_fd = accept(fd)
-	do_something_with(conn_fd)
-	close(conn_fd)
-and for the client:
-fd = socket()
-connect(fd, address)
-do_something_with(fd)
-close(fd)
-*/
-
 static void msg(const char *msg){
 	fprintf(stderr, "%s\n", msg);
 }
+
 static void die(const char *msg){
 	int err = errno;
 	fprintf(stderr, "[%d] %s\n", err, msg);
 	abort();
 }
+
 static void do_something(int connfd) {
 	char rbuffer[64] = {};
 	ssize_t n = read(connfd, rbuffer, sizeof(rbuffer) - 1); //read upto sizeof(rbuf) - 1 bytes starting at rbuf
@@ -41,22 +28,17 @@ static void do_something(int connfd) {
 		return;
 	}
 	printf("client says: %s\n", rbuffer);	
-		
 	char wbuffer[] = "world";
 	write(connfd, wbuffer, strlen(wbuffer));
 }
+
 int main(){
-	
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
 	if(fd<0){
 		die("socket()");
 	}	
-	
-	//fd is like an integer that reffers to something in kernel, like port or tcp or disk file etc.
 	// AF_INET is for ipv4, you can use AF_INET6 for ipv6 socket
 	// SOCK_STREAM is for TCP
-	//lets introduce a new sysCall
-	//needed for most server applications
 	int val = 1;
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)); 
 	//setsockopt() configures a socket. SO_REUSEADDR server binds to same address if restarted
@@ -74,32 +56,14 @@ int main(){
 	if(rv){
 		die("listen()");
 	}
-
-	//do something (simple read and write while(true){
+	//do something (simple read and write while(true)
 	while(true){
-
-	struct sockaddr_in client_addr = {};
-	socklen_t socklen = sizeof(client_addr);
-	int connfd = accept(fd, (struct sockaddr *)&client_addr, &socklen);
-	do_something(connfd);
-	close(connfd);
-	return 0;
+		struct sockaddr_in client_addr = {};
+		socklen_t socklen = sizeof(client_addr);
+		int connfd = accept(fd, (struct sockaddr *)&client_addr, &socklen);
+		do_something(connfd);
+		close(connfd);
+		return 0;
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-		
-
-
 

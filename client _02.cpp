@@ -15,6 +15,7 @@ static void die(const char *msg){
 	abort();
 }
 
+
 int main(){
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
 	if(fd<0){
