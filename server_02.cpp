@@ -33,6 +33,7 @@ static int32_t read_full(int fd, char *buf, size_t n){
         n -= (size_t)rv;
         buf += rv;
     }
+    return 0;
 }
 
 static int32_t write_all(int fd, const char *buf, size_t n){
@@ -45,6 +46,7 @@ static int32_t write_all(int fd, const char *buf, size_t n){
         n -= (size_t)rv;
         buf += rv;
     }
+    return 0;
 }
 
 static int32_t one_request(int connfd){
@@ -76,8 +78,8 @@ static int32_t one_request(int connfd){
     }
 
     //do something
-    rbuffer[4 + len] = NULL;
-    printf("client says: %s\n", rbuffer[4]);
+    rbuffer[4 + len] = '\0';
+    printf("client says: %s\n", &rbuffer[4]);
 
     //reply
     const char reply[] = "world";
@@ -94,7 +96,7 @@ int main(){
 		die("socket()");
 	}	
 	int val = 1;
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)); 
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));  //set socket option
 	struct sockaddr_in addr = {};
 	addr.sin_family = AF_INET;
 	addr.sin_port = ntohs(1234);
