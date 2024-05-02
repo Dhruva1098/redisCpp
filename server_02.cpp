@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-const size_t k_max_msg = 4096;
+const size_t K_MAX_MSG = 4096;
 
 static void msg(const char *msg){
 	fprintf(stderr, "%s\n", msg);
@@ -50,7 +50,7 @@ static int32_t write_all(int fd, const char *buf, size_t n){
 }
 
 static int32_t one_request(int connfd){
-    char rbuffer[4 + k_max_msg +1]; //4 bytes header
+    char rbuffer[4 + K_MAX_MSG +1]; //4 bytes header
     errno = 0;
     int32_t err = read_full(connfd, rbuffer, 4);
     if(err){
@@ -65,7 +65,7 @@ static int32_t one_request(int connfd){
 
     uint32_t len = 0;
     memcpy(&len, rbuffer, 4);
-    if(len>k_max_msg){
+    if(len > K_MAX_MSG){
         msg("too long");
         return -1;
     }

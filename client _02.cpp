@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-const size_t k_max_msg = 4096;
+const size_t K_MAX_MSG = 4096;
 
 static void die(const char *msg){
 	int err = errno;
@@ -49,16 +49,16 @@ static int32_t write_all(int fd, const char *buf, size_t n){
 }
 static int32_t query(int fd, const char *text){
 	uint32_t len = (uint32_t)strlen(text);
-	if(len>k_max_msg){
+	if(len>K_MAX_MSG){
 		return -1;
 	}
-	char wbuffer[4 + k_max_msg];
+	char wbuffer[4 + K_MAX_MSG];
 	memcpy(wbuffer, &len, 4);
 	memcpy(&wbuffer[4], text, len);
 	if(int32_t err = write_all(fd, wbuffer, 4 + len)){
 		return err;
 	}
-	char rbuffer[4 + k_max_msg + 1];
+	char rbuffer[4 + K_MAX_MSG + 1];
 	errno = 0;
 	int32_t err = read_full(fd, rbuffer, 4);
 	if(err){
@@ -71,7 +71,7 @@ static int32_t query(int fd, const char *text){
 		return err;
 	}
 	memcpy(&len, rbuffer, 4);
-	if(len>k_max_msg){
+	if(len>K_MAX_MSG){
 		msg("too long");
 		return -1;
 	}
