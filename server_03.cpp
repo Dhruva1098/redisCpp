@@ -23,10 +23,10 @@ struct conn{
     int fd = -1;
     uint32_t state = 0;
     size_t read_buffer_size = 0;
-    uint32_t read_buffer[4 + K_MAX_MSG];
+    uint8_t read_buffer[4 + K_MAX_MSG]; //ehy 8 and not 32?
     size_t write_buffer_size = 0;
     size_t write_buffer_sent = 0;
-    uint32_t write_buffer[4 + K_MAX_MSG];
+    uint8_t write_buffer[4 + K_MAX_MSG];
 };
 
 static void msg(const char *msg){
@@ -54,6 +54,79 @@ static void fd_set_nb(int fd){
         die("fcntl error");
     }
 }
+static void state_res(conn *conn);
+
+static void conn_put(std::vector<conn *> &fd2conn, struct conn *conn){
+    if(fd2conn.size()<=(size_t)conn->fd){
+        fd2conn.resize(conn->fd + 1);
+    }
+    fd2conn[conn->fd] = conn;
+}
+static int32_t accept_new_conn(std::vector<conn *> &fd2conn, int fd){
+    //accept
+    struct sockaddr_in client_addr = {};
+    socklen_t socklen = sizeof(client_addr);
+    int connfd = accept(fd, (struct sockaddr*)&client_addr, &socklen);
+    if(connfd<0){
+        msg("accept error");
+        return -1;
+    }
+
+    //set new connection to nonblocking mode
+    fd_set_nb(connfd);
+    //create conn
+    struct conn *conn = (struct conn *)malloc(sizeof(struct conn));
+    if(!conn){
+        close(connfd);
+        return -1;
+    }
+    conn->fd = connfd;
+    conn->state = STATE_REQ;
+    conn->read_buffer_size = 0;
+    conn->write_buffer_size = 0;
+    conn->write_buffer_sent = 0;
+    conn_put(fd2conn, conn);
+    return 0;
+}
+static bool try_one_request(conn *conn){
+    //parse one request from buffer
+    if(conn->read_buffer_size < 4){ //not enough data currently, try later
+        return false;
+    }
+    uint32_t len = 0;
+    memcpy(&len, &conn->read_buffer[0], 4);
+    if(len > K_MAX_MSG){
+        msg("too long");
+        conn->state = STATE_END;
+        return false;
+    }
+    if(4 + len > conn->read_buffer_size){
+        //not enough data
+        return false;
+    }
+
+    //got one request, do something with it
+    printf("client says: %.*s \n",len, &conn->read_buffer[4]);
+
+    //generate echoing response
+    memcpy(&conn->write_buffer[0], &len, 4);
+    memcpy(&conn->write_buffer[4], &conn->read_buffer[4], len);
+    conn->write_buffer_size = 4 + len;
+    
+    //remove request from buffer
+    size_t remain = conn->read_buffer_size - 4 - len;
+    if(remain){
+        memmove(conn->read_buffer, &conn->read_buffer[4+len], remain); //frequent use of memmove is inefficient and should not be done
+    }
+    conn->read_buffer_size = remain;
+    //change state
+    conn->state = STATE_RES;
+    state_res(conn);
+
+    //continie outer loop if request is completly processed
+    return (conn->state == STATE_REQ);
+}
+
 static bool try_flush_buffer(conn *conn){
     ssize_t rv = 0;
     do{
@@ -80,8 +153,46 @@ static bool try_flush_buffer(conn *conn){
     return true;
 }
 
+static bool try_fill_buffer(conn *conn){
+    //try to fill buffer
+    assert(conn->read_buffer_size<sizeof(conn->read_buffer));
+    ssize_t rv = 0;
+    do{
+        size_t cap = sizeof(conn->read_buffer) - conn->read_buffer_size;
+        rv = read(conn->fd, &conn->read_buffer[conn->read_buffer_size], cap);
+    } while ((rv<0)&&(errno = EINTR));
+    if((rv<0)&&(errno = EAGAIN)){
+        return false;
+    }
+    if(rv < 0){
+        msg("read() error");
+        conn->state = STATE_END;
+        return false;
+    }
+    if(rv == 0){
+        if(conn->read_buffer_size > 0){
+            msg("unexpected EOF");
+        } else {
+            msg("EOF");
+        }
+        conn->state = STATE_END;
+        return false;
+    }
+
+    conn->read_buffer_size += (size_t)rv;
+    assert(conn->read_buffer_size <= sizeof(conn->read_buffer) - conn->read_buffer_size);
+
+    //try to process request one by one
+    while(try_one_request(conn)){}
+    return(conn->state == STATE_REQ);
+}
+
 static void state_res(conn *conn){
     while (try_flush_buffer(conn)){}
+}
+
+static void state_req(conn *conn){
+    while(try_fill_buffer(conn)){}
 }
 
 static void connection_io(conn *conn){
@@ -149,7 +260,19 @@ int main(){
             if(poll_args[i].revents){
                 conn *conn = fd2conn[poll_args[i].fd];
                 connection_io(conn);
+                if(conn->state == STATE_END){
+                    //client closed or something bad happened, anyways destrou connection
+                    fd2conn[conn->fd] = NULL;
+                    (void)close(conn->fd);
+                    free(conn);
+                }
             }
         }
+
+        //try to accept new connection if listening fd is active
+        if(poll_args[0].revents){
+            (void)accept_new_conn(fd2conn, fd);
+        }
     }
+    return 0;
 }
