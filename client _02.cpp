@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-const size_t K_MAX_MSG = 4096;
+const size_t K_MAX_MSG = 4090;
 
 static void die(const char *msg){
 	int err = errno;
