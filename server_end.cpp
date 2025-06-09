@@ -1,6 +1,5 @@
 #include <string>
 #include <vector>
-#include <map>
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -14,6 +13,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
+#include "hashtab.h"
 
 const size_t k_max_msg = 4096;
 const size_t k_max_args = 1024;
@@ -40,6 +40,89 @@ struct Conn {
     size_t wbuf_sent = 0;
     uint8_t wbuf[4 + k_max_msg];
 };
+
+// Entry struct for custom hashmap
+struct Entry {
+    HNode node;
+    std::string key;
+    std::string val;
+};
+
+// Hash function for string keys
+static uint64_t str_hash(const uint8_t *data, size_t len) {
+    uint32_t h = 0x811C9DC5;
+    for (size_t i = 0; i < len; i++) {
+        h = (h + data[i]) * 0x01000193;
+    }
+    return h;
+}
+
+// Helper to get Entry from HNode pointer
+#define container_of(ptr, type, member) \
+    ((type *)((char *)(ptr)-offsetof(type, member)))
+
+// Equality function for Entry
+static bool entry_eq(HNode *lhs, HNode *rhs) {
+    Entry *le = container_of(lhs, Entry, node);
+    Entry *re = container_of(rhs, Entry, node);
+    return le->key == re->key;
+}
+
+// The data structure for the key space (custom hashmap)
+static HMap g_map;
+
+static uint32_t do_get(
+    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+{
+    Entry key;
+    key.key = cmd[1];
+    key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
+    HNode *node = hm_lookup(&g_map, &key.node, entry_eq);
+    if (!node) {
+        return RES_NX;
+    }
+    std::string &val = container_of(node, Entry, node)->val;
+    assert(val.size() <= k_max_msg);
+    memcpy(res, val.data(), val.size());
+    *reslen = (uint32_t)val.size();
+    return RES_OK;
+}
+
+static uint32_t do_set(
+    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+{
+    (void)res;
+    (void)reslen;
+    Entry key;
+    key.key = cmd[1];
+    key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
+    HNode *node = hm_lookup(&g_map, &key.node, entry_eq);
+    if (node) {
+        container_of(node, Entry, node)->val = cmd[2];
+    } else {
+        Entry *ent = new Entry();
+        ent->key = cmd[1];
+        ent->val = cmd[2];
+        ent->node.hcode = key.node.hcode;
+        hm_insert(&g_map, &ent->node);
+    }
+    return RES_OK;
+}
+
+static uint32_t do_del(
+    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+{
+    (void)res;
+    (void)reslen;
+    Entry key;
+    key.key = cmd[1];
+    key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
+    HNode *node = hm_pop(&g_map, &key.node, entry_eq);
+    if (node) {
+        delete container_of(node, Entry, node);
+    }
+    return RES_OK;
+}
 
 static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -136,40 +219,6 @@ static int32_t parse_req(
         return -1;  //garbage
     }
     return 0;
-}
-
-// The data structure for the key space. This is just a placeholder
-static std::map<std::string, std::string> g_map;
-
-static uint32_t do_get(
-    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
-{
-    if (!g_map.count(cmd[1])) {
-        return RES_NX;
-    }
-    std::string &val = g_map[cmd[1]];
-    assert(val.size() <= k_max_msg);
-    memcpy(res, val.data(), val.size());
-    *reslen = (uint32_t)val.size();
-    return RES_OK;
-}
-
-static uint32_t do_set(
-    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
-{
-    (void)res;
-    (void)reslen;
-    g_map[cmd[1]] = cmd[2];
-    return RES_OK;
-}
-
-static uint32_t do_del(
-    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
-{
-    (void)res;
-    (void)reslen;
-    g_map.erase(cmd[1]);
-    return RES_OK;
 }
 
 static bool cmd_is(const std::string &word, const char *cmd) {

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#include </home/user/Documents/projects/redis/hashtab.h>
+#include "hashtab.h"
 
 
 //we will create hashtable in such a way that its size is in power of 2 so indexing can be simple bit mask with hash code
