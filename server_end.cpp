@@ -29,6 +29,11 @@ enum {
     RES_NX = 2,
 };
 
+enum ValueType {
+    TYPE_STRING = 0,
+    TYPE_INT = 1
+};
+
 struct Conn {
     int fd = -1;
     uint32_t state = 0;     // either STATE_REQ or STATE_RES
@@ -45,7 +50,44 @@ struct Conn {
 struct Entry {
     HNode node;
     std::string key;
-    std::string val;
+    ValueType type;
+    union {
+        std::string str_val;
+        int64_t int_val;
+    } val;
+    
+    Entry() : type(TYPE_STRING) {
+        new (&val.str_val) std::string();
+    }
+    
+    Entry(const Entry& other) : type(other.type) {
+        if (type == TYPE_STRING) {
+            new (&val.str_val) std::string(other.val.str_val);
+        } else {
+            val.int_val = other.val.int_val;
+        }
+    }
+    
+    ~Entry() {
+        if (type == TYPE_STRING) {
+            val.str_val.~basic_string();
+        }
+    }
+    
+    Entry& operator=(const Entry& other) {
+        if (this != &other) {
+            if (type == TYPE_STRING) {
+                val.str_val.~basic_string();
+            }
+            type = other.type;
+            if (type == TYPE_STRING) {
+                new (&val.str_val) std::string(other.val.str_val);
+            } else {
+                val.int_val = other.val.int_val;
+            }
+        }
+        return *this;
+    }
 };
 
 // Hash function for string keys
@@ -81,10 +123,19 @@ static uint32_t do_get(
     if (!node) {
         return RES_NX;
     }
-    std::string &val = container_of(node, Entry, node)->val;
-    assert(val.size() <= k_max_msg);
-    memcpy(res, val.data(), val.size());
-    *reslen = (uint32_t)val.size();
+    Entry *entry = container_of(node, Entry, node);
+    if (entry->type == TYPE_STRING) {
+        assert(entry->val.str_val.size() <= k_max_msg);
+        memcpy(res, entry->val.str_val.data(), entry->val.str_val.size());
+        *reslen = (uint32_t)entry->val.str_val.size();
+    } else {
+        // For integers, convert to string representation
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%ld", entry->val.int_val);
+        assert(len > 0 && len < sizeof(buf));
+        memcpy(res, buf, len);
+        *reslen = len;
+    }
     return RES_OK;
 }
 
@@ -97,12 +148,34 @@ static uint32_t do_set(
     key.key = cmd[1];
     key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
     HNode *node = hm_lookup(&g_map, &key.node, entry_eq);
+    
+    // Try to parse as integer first
+    char *end;
+    int64_t int_val = strtoll(cmd[2].c_str(), &end, 10);
+    bool is_int = (*end == '\0');  // Check if the entire string was parsed as integer
+    
     if (node) {
-        container_of(node, Entry, node)->val = cmd[2];
+        Entry *entry = container_of(node, Entry, node);
+        if (entry->type == TYPE_STRING) {
+            entry->val.str_val.~basic_string();
+        }
+        if (is_int) {
+            entry->type = TYPE_INT;
+            entry->val.int_val = int_val;
+        } else {
+            entry->type = TYPE_STRING;
+            new (&entry->val.str_val) std::string(cmd[2]);
+        }
     } else {
         Entry *ent = new Entry();
         ent->key = cmd[1];
-        ent->val = cmd[2];
+        if (is_int) {
+            ent->type = TYPE_INT;
+            ent->val.int_val = int_val;
+        } else {
+            ent->type = TYPE_STRING;
+            new (&ent->val.str_val) std::string(cmd[2]);
+        }
         ent->node.hcode = key.node.hcode;
         hm_insert(&g_map, &ent->node);
     }
@@ -121,6 +194,23 @@ static uint32_t do_del(
     if (node) {
         delete container_of(node, Entry, node);
     }
+    return RES_OK;
+}
+
+static uint32_t do_type(
+    const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+{
+    Entry key;
+    key.key = cmd[1];
+    key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
+    HNode *node = hm_lookup(&g_map, &key.node, entry_eq);
+    if (!node) {
+        return RES_NX;
+    }
+    Entry *entry = container_of(node, Entry, node);
+    const char *type_str = entry->type == TYPE_STRING ? "string" : "integer";
+    memcpy(res, type_str, strlen(type_str));
+    *reslen = strlen(type_str);
     return RES_OK;
 }
 
@@ -240,6 +330,8 @@ static int32_t do_request(
         *rescode = do_set(cmd, res, reslen);
     } else if (cmd.size() == 2 && cmd_is(cmd[0], "del")) {
         *rescode = do_del(cmd, res, reslen);
+    } else if (cmd.size() == 2 && cmd_is(cmd[0], "type")) {
+        *rescode = do_type(cmd, res, reslen);
     } else {
         // cmd is not recognized
         *rescode = RES_ERR;

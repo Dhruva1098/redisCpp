@@ -8,7 +8,8 @@ A lightweight, in-memory key-value store implementation inspired by Redis, writt
 - TCP server with non-blocking I/O
 - Event-driven architecture using `poll()`
 - Binary protocol for efficient communication
-- Basic Redis-like commands (GET, SET, DEL)
+- Basic Redis-like commands (GET, SET, DEL, TYPE)
+- Support for string and integer data types
 - Progressive hashmap resizing for better performance
 
 ## Architecture
@@ -105,11 +106,19 @@ The server uses a binary protocol for communication:
 
 2. Use the client to interact with the server:
    ```bash
-   # Set a key-value pair
+   # Set a string value
    ./client set mykey myvalue
+
+   # Set an integer value
+   ./client set myint 42
 
    # Get a value
    ./client get mykey
+   ./client get myint
+
+   # Check the type of a value
+   ./client type mykey
+   ./client type myint
 
    # Delete a key
    ./client del mykey
