@@ -50,41 +50,14 @@ struct Conn {
 struct Entry {
     HNode node;
     std::string key;
-    ValueType type;
-    union {
-        std::string str_val;
-        int64_t int_val;
-    } val;
+    int64_t val;
     
-    Entry() : type(TYPE_STRING) {
-        new (&val.str_val) std::string();
-    }
-    
-    Entry(const Entry& other) : type(other.type) {
-        if (type == TYPE_STRING) {
-            new (&val.str_val) std::string(other.val.str_val);
-        } else {
-            val.int_val = other.val.int_val;
-        }
-    }
-    
-    ~Entry() {
-        if (type == TYPE_STRING) {
-            val.str_val.~basic_string();
-        }
-    }
-    
+    Entry() : val(0) {}
+    Entry(const Entry& other) : val(other.val) {}
+    ~Entry() = default;
     Entry& operator=(const Entry& other) {
         if (this != &other) {
-            if (type == TYPE_STRING) {
-                val.str_val.~basic_string();
-            }
-            type = other.type;
-            if (type == TYPE_STRING) {
-                new (&val.str_val) std::string(other.val.str_val);
-            } else {
-                val.int_val = other.val.int_val;
-            }
+            val = other.val;
         }
         return *this;
     }
@@ -124,18 +97,11 @@ static uint32_t do_get(
         return RES_NX;
     }
     Entry *entry = container_of(node, Entry, node);
-    if (entry->type == TYPE_STRING) {
-        assert(entry->val.str_val.size() <= k_max_msg);
-        memcpy(res, entry->val.str_val.data(), entry->val.str_val.size());
-        *reslen = (uint32_t)entry->val.str_val.size();
-    } else {
-        // For integers, convert to string representation
-        char buf[32];
-        int len = snprintf(buf, sizeof(buf), "%ld", entry->val.int_val);
-        assert(len > 0 && len < sizeof(buf));
-        memcpy(res, buf, len);
-        *reslen = len;
-    }
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%ld", entry->val);
+    assert(len > 0 && len < sizeof(buf));
+    memcpy(res, buf, len);
+    *reslen = len;
     return RES_OK;
 }
 
@@ -149,33 +115,19 @@ static uint32_t do_set(
     key.node.hcode = str_hash((const uint8_t *)key.key.data(), key.key.size());
     HNode *node = hm_lookup(&g_map, &key.node, entry_eq);
     
-    // Try to parse as integer first
     char *end;
     int64_t int_val = strtoll(cmd[2].c_str(), &end, 10);
-    bool is_int = (*end == '\0');  // Check if the entire string was parsed as integer
+    if (*end != '\0') {
+        return RES_ERR;  // Not a valid integer
+    }
     
     if (node) {
         Entry *entry = container_of(node, Entry, node);
-        if (entry->type == TYPE_STRING) {
-            entry->val.str_val.~basic_string();
-        }
-        if (is_int) {
-            entry->type = TYPE_INT;
-            entry->val.int_val = int_val;
-        } else {
-            entry->type = TYPE_STRING;
-            new (&entry->val.str_val) std::string(cmd[2]);
-        }
+        entry->val = int_val;
     } else {
         Entry *ent = new Entry();
         ent->key = cmd[1];
-        if (is_int) {
-            ent->type = TYPE_INT;
-            ent->val.int_val = int_val;
-        } else {
-            ent->type = TYPE_STRING;
-            new (&ent->val.str_val) std::string(cmd[2]);
-        }
+        ent->val = int_val;
         ent->node.hcode = key.node.hcode;
         hm_insert(&g_map, &ent->node);
     }
@@ -207,8 +159,7 @@ static uint32_t do_type(
     if (!node) {
         return RES_NX;
     }
-    Entry *entry = container_of(node, Entry, node);
-    const char *type_str = entry->type == TYPE_STRING ? "string" : "integer";
+    const char *type_str = "integer";
     memcpy(res, type_str, strlen(type_str));
     *reslen = strlen(type_str);
     return RES_OK;
