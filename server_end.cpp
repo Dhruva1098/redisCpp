@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
+#include <time.h>
 
 #include "hashtab.h"
 
@@ -85,6 +86,47 @@ static bool entry_eq(HNode *lhs, HNode *rhs) {
 
 // The data structure for the key space (custom hashmap)
 static HMap g_map;
+
+// Add logging levels
+enum LogLevel {
+    LOG_DEBUG,
+    LOG_INFO,
+    LOG_WARN,
+    LOG_ERROR
+};
+
+// Add logging function
+static void log_msg(LogLevel level, const char *fmt, ...) {
+    time_t now = time(NULL);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    
+    const char *level_str;
+    switch (level) {
+        case LOG_DEBUG: level_str = "DEBUG"; break;
+        case LOG_INFO:  level_str = "INFO";  break;
+        case LOG_WARN:  level_str = "WARN";  break;
+        case LOG_ERROR: level_str = "ERROR"; break;
+        default:        level_str = "UNKNOWN";
+    }
+    
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "[%s] [%s] ", timestamp, level_str);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
+// Replace existing msg() and die() functions
+static void msg(const char *msg) {
+    log_msg(LOG_INFO, "%s", msg);
+}
+
+static void die(const char *msg) {
+    log_msg(LOG_ERROR, "%s: %s", msg, strerror(errno));
+    abort();
+}
 
 static uint32_t do_get(
     const std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
@@ -165,16 +207,6 @@ static uint32_t do_type(
     return RES_OK;
 }
 
-static void msg(const char *msg) {
-    fprintf(stderr, "%s\n", msg);
-}
-
-static void die(const char *msg) {
-    int err = errno;
-    fprintf(stderr, "[%d] %s\n", err, msg);
-    abort();
-}
-
 static void fd_set_nb(int fd) {
     errno = 0;
     int flags = fcntl(fd, F_GETFL, 0);
@@ -201,14 +233,17 @@ static void conn_put(std::vector<Conn *> &fd2conn, struct Conn *conn) {
 }
 
 static int32_t accept_new_conn(std::vector<Conn *> &fd2conn, int fd) {
-    // accept
     struct sockaddr_in client_addr = {};
     socklen_t socklen = sizeof(client_addr);
     int connfd = accept(fd, (struct sockaddr *)&client_addr, &socklen);
     if (connfd < 0) {
-        msg("accept() error");
-        return -1;  // error
+        log_msg(LOG_ERROR, "accept() error: %s", strerror(errno));
+        return -1;
     }
+
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+    log_msg(LOG_INFO, "New connection from %s:%d", client_ip, ntohs(client_addr.sin_port));
 
     // set the new connection fd to nonblocking mode
     fd_set_nb(connfd);
@@ -295,15 +330,13 @@ static int32_t do_request(
 }
 
 static bool try_one_request(Conn *conn) {
-    // try to parse a request from the buffer
     if (conn->rbuf_size < 4) {
-        // not enough data in the buffer. 
         return false;
     }
     uint32_t len = 0;
     memcpy(&len, &conn->rbuf[0], 4);
     if (len > k_max_msg) {
-        msg("too long");
+        log_msg(LOG_ERROR, "Message too long: %u bytes", len);
         conn->state = STATE_END;
         return false;
     }
@@ -425,6 +458,8 @@ static void connection_io(Conn *conn) {
 }
 
 int main() {
+    log_msg(LOG_INFO, "Starting server on port 1234");
+    
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         die("socket()");
