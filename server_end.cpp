@@ -98,7 +98,7 @@ static uint32_t do_get(
     }
     Entry *entry = container_of(node, Entry, node);
     char buf[32];
-    int len = snprintf(buf, sizeof(buf), "%ld", entry->val);
+    int len = snprintf(buf, sizeof(buf), "%lld", entry->val);
     assert(len > 0 && len < sizeof(buf));
     memcpy(res, buf, len);
     *reslen = len;
